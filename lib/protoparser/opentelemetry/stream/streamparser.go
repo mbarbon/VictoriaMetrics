@@ -130,7 +130,18 @@ func (wr *writeContext) appendFromScopeMetrics(sc *pb.ScopeMetrics, metadataList
 				skippedSampleLogger.Warnf("unsupported delta temporality for %q ('exponential histogram'): skipping it", metricName)
 				continue
 			}
+			negativeSampleDropped := false
 			for _, p := range m.ExponentialHistogram.DataPoints {
+				if p.Negative != nil {
+					// only log/count once per metric
+					if !negativeSampleDropped {
+						rowsDroppedUnsupportedExponentialHistogram.Inc()
+						skippedSampleLogger.Warnf("unsupported negative buckets for %q ('exponential histogram'): skipping it", metricName)
+					}
+					negativeSampleDropped = true
+					continue
+				}
+
 				wr.appendSamplesFromExponentialHistogram(metricName, p)
 			}
 			metadata.Type = uint32(prompb.MetricMetadataHISTOGRAM)
@@ -245,17 +256,6 @@ func (wr *writeContext) appendSamplesFromExponentialHistogram(metricName string,
 			if s > 0 {
 				lowerBound := bound * math.Pow(base, float64(i))
 				upperBound := lowerBound * base
-				vmRange := fmt.Sprintf("%.3e...%.3e", lowerBound, upperBound)
-				wr.appendSampleWithExtraLabel(metricName+"_bucket", "vmrange", vmRange, t, float64(s), isStale)
-			}
-		}
-	}
-	if p.Negative != nil {
-		bound := math.Pow(2, -float64(p.Negative.Offset)*ratio)
-		for i, s := range p.Negative.BucketCounts {
-			if s > 0 {
-				upperBound := bound * math.Pow(base, float64(i))
-				lowerBound := upperBound / base
 				vmRange := fmt.Sprintf("%.3e...%.3e", lowerBound, upperBound)
 				wr.appendSampleWithExtraLabel(metricName+"_bucket", "vmrange", vmRange, t, float64(s), isStale)
 			}
